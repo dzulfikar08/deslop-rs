@@ -1,0 +1,35 @@
+[package]
+name = "deslop-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Removes slop from TypeScript projects. Rust rewrite of deslop."
+repository = "https://github.com/ivy-apps/deslop-rs"
+
+[lib]
+name = "deslop_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deslop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+camino = "1"
+clap = { version = "4", features = ["derive"] }
+globset = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+walkdir = "2"
+rayon = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
