@@ -129,19 +129,17 @@ fn deslop_project(
     let asts: Vec<_> = files
         .par_iter()
         .filter_map(|path| {
-            // TODO(port): replace with parseAst once ts::cst lands; this stub
-            // reads the file and fabricates an AstModule with no imports.
             let content = std::fs::read_to_string(path).ok()?;
             let rel = path
                 .strip_prefix(&params.project_path)
                 .unwrap_or(path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            Some(crate::ast::AstModule {
-                id: rel.clone(),
-                imports: Vec::new(),
-                cst: crate::ts::cst::parse_ts(&rel, content).program.ok()?,
-            })
+            // TODO(port): route `rel` through the module resolver's
+            // reverseResolve so ids match alias-mapped import targets; the
+            // raw extension-dropped path is the POSIX-shaped fallback.
+            let prog = crate::ts::cst::parse_ts(&rel, &content);
+            Some(crate::ast::parse_ast(rel, &prog))
         })
         .collect();
 

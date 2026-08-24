@@ -1,21 +1,22 @@
-//! Ports the AST half of `Deslop/AST.hs`.
+//! Ports `Deslop/AST.hs`.
 
-use crate::ts::cst::CsT;
+use crate::ts::cst::{TsNode, TsProgram};
 
-/// One import statement extracted from a module.
-#[derive(Debug, Clone)]
-pub struct ImportEntry {
-    pub specifier: String,
-    /// True when the specifier starts with `./` or `../`.
-    pub is_relative: bool,
+/// Ports `Deslop.AST.ImportNode`: one import statement extracted from a
+/// module, kept as its raw text so problems can quote it verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportNode {
+    pub target: String,
+    pub raw_statement: String,
 }
 
-/// A parsed module: canonical id, its imports, and its lossless CST.
+/// Ports `Deslop.AST.AstModule`.
+#[derive(Debug, Clone)]
 pub struct AstModule {
-    /// Module identity — relative path with `/`, extension kept.
+    /// Module identity — relative path with `/`, extension dropped later by
+    /// the resolver; see `module_id`.
     pub id: String,
-    pub imports: Vec<ImportEntry>,
-    pub cst: CsT,
+    pub nodes: Vec<ImportNode>,
 }
 
 impl AstModule {
@@ -24,49 +25,41 @@ impl AstModule {
     }
 }
 
-// TODO(port): parseAst — real import extraction from the token stream, plus
-// the companion-file logic from Deslop/AST.hs.
-pub fn parse_ast(id: String, source: String) -> AstModule {
-    let imports = extract_imports(&source);
-    AstModule { id, imports, cst: CsT { source } }
-}
-
-fn extract_imports(source: &str) -> Vec<ImportEntry> {
-    // Placeholder scanner: matches `from '<spec>'` / `from "<spec>"`, skipping
-    // line comments so commented-out imports don't count. The real port must
-    // go through the lexer so block comments and strings don't fool it either.
-    let mut out = Vec::new();
-    for (line_no, line) in source.lines().enumerate() {
-        let code = line.split_once("//").map_or(line, |(c, _)| c);
-        for (i, _) in code.match_indices("from") {
-            let after = code[i + 4..].trim_start();
-            let quote = match after.chars().next() {
-                Some(q @ ('"' | '\'')) => q,
-                _ => continue,
-            };
-            if let Some(end) = after[1..].find(quote) {
-                let spec = &after[1..1 + end];
-                let is_relative = spec.starts_with("./") || spec.starts_with("../");
-                out.push((line_no, ImportEntry { specifier: spec.to_string(), is_relative }));
-            }
-        }
-    }
-    out.into_iter().map(|(_, e)| e).collect()
+/// Ports `Deslop.AST.parseAst`'s node mapping: every structured import node
+/// becomes an edge candidate carrying its raw statement; source trivia drops
+/// out.
+///
+/// TODO(port): the module-id half of parseAst — `reverseResolve` of the file's
+/// own path through the tsconfig alias mapping, falling back to the raw
+/// extension-dropped path — once `TypeScript.ModuleResolver` lands.
+pub fn parse_ast(id: String, prog: &TsProgram) -> AstModule {
+    let nodes = prog
+        .cst
+        .iter()
+        .filter_map(|node| match node {
+            TsNode::Import { prefix, target, suffix } => Some(ImportNode {
+                target: target.clone(),
+                raw_statement: format!("{prefix}{target}{suffix}"),
+            }),
+            TsNode::Source { .. } => None,
+        })
+        .collect();
+    AstModule { id, nodes }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ts::cst::parse_ts;
 
     #[test]
-    fn finds_relative_and_absolute_imports() {
-        let m = parse_ast(
-            "src/a.ts".into(),
-            "import x from './b';\nimport y from '@/c';\n// from './not-real'\n".into(),
-        );
-        let specs: Vec<_> = m.imports.iter().map(|i| i.specifier.clone()).collect();
-        assert_eq!(specs, ["./b", "@/c"]);
-        assert!(m.imports[0].is_relative);
-        assert!(!m.imports[1].is_relative);
+    fn extracts_import_nodes_with_raw_statements() {
+        let src = "import x from './b';\nimport y from '@/c';\n// from './not-real'\n";
+        let m = parse_ast("src/a.ts".into(), &parse_ts("src/a.ts", src));
+        let targets: Vec<_> = m.nodes.iter().map(|n| n.target.clone()).collect();
+        assert_eq!(targets, ["./b", "@/c"]);
+        assert_eq!(m.nodes[0].raw_statement, "import x from './b';");
+        // Commented import is not an edge.
+        assert!(m.nodes.iter().all(|n| n.target != "./not-real"));
     }
 }

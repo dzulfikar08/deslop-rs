@@ -14,7 +14,7 @@ pub fn build_module_graph(asts: &[AstModule]) -> CodeGraph {
         .map(|m| {
             (
                 m.module_id().to_string(),
-                m.imports.iter().map(|i| i.specifier.clone()).collect(),
+                m.nodes.iter().map(|n| n.target.clone()).collect(),
             )
         })
         .collect()
