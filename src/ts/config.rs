@@ -1,29 +1,122 @@
-//! Ports `TypeScript/Config.hs` — tsconfig.json path-alias resolution.
+//! Ports `TypeScript/Config.hs` — tsconfig.json reading and path-mapping
+//! patterns.
 //!
-//! TODO(port): `extends` chains and `baseUrl` fallbacks from the original;
-//! this covers the flat `compilerOptions.paths` case.
+//! A mapping key/value is either an exact path or a wildcard with one `*`
+//! split into prefix and suffix. Mappings are sorted so exact keys beat
+//! wildcards, longer prefixes beat shorter, then longer suffixes — that order
+//! decides resolution everywhere downstream.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Default)]
+use crate::types::DeslopError;
+
+/// Ports `TypeScript.Config.Pattern`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pattern {
+    Exact(String),
+    Wildcard { pre: String, suff: String },
+}
+
+impl Pattern {
+    /// Ports `parsePattern`: empty text is invalid; more than one `*` is
+    /// invalid; one `*` splits into prefix and suffix.
+    pub fn parse(t: &str) -> Option<Pattern> {
+        match t.matches('*').count() {
+            _ if t.is_empty() => None,
+            0 => Some(Pattern::Exact(t.to_string())),
+            1 => {
+                let (pre, suff) = t.split_once('*')?;
+                Some(Pattern::Wildcard { pre: pre.to_string(), suff: suff.to_string() })
+            }
+            _ => None,
+        }
+    }
+
+    fn sort_key(&self) -> (u8, usize, usize) {
+        match self {
+            // Priority 1: exact matches float to the top.
+            Pattern::Exact(k) => (1, k.chars().count(), 0),
+            // Priority 0: wildcards after exacts, sub-sorted by prefix then
+            // suffix length.
+            Pattern::Wildcard { pre, suff } => (0, pre.chars().count(), suff.chars().count()),
+        }
+    }
+}
+
+/// Ports `TypeScript.Config.PathMapping`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathMapping {
+    pub key: Pattern,
+    pub values: Vec<Pattern>,
+}
+
+impl PathMapping {
+    /// Ports `parsePathMapping`: an empty target array, an invalid key, or a
+    /// key that is exact while every candidate target carrying a wildcard
+    /// fails ruins the mapping; otherwise invalid targets are filtered out,
+    /// `./` prefixes are cleaned away recursively, and at least one target
+    /// must survive.
+    pub fn parse(key_text: &str, values: &[String]) -> Option<PathMapping> {
+        let key = Pattern::parse(key_text)?;
+        let cleaned: Vec<Pattern> = values
+            .iter()
+            .filter_map(|v| Pattern::parse(v))
+            .map(clean_value_pattern)
+            .filter(|v| valid_key_value_pair(&key, v))
+            .collect();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(PathMapping { key, values: cleaned })
+        }
+    }
+}
+
+fn clean_value_pattern(p: Pattern) -> Pattern {
+    match p {
+        Pattern::Exact(t) => Pattern::Exact(clean_prefix(t)),
+        Pattern::Wildcard { pre, suff } => Pattern::Wildcard { pre: clean_prefix(pre), suff },
+    }
+}
+
+/// Strips meaningless current-directory prefixes: `.` becomes empty and `./`
+/// prefixes are removed repeatedly; `../` traversals survive untouched.
+fn clean_prefix(t: String) -> String {
+    if t == "." {
+        String::new()
+    } else if let Some(rest) = t.strip_prefix("./") {
+        clean_prefix(rest.to_string())
+    } else {
+        t
+    }
+}
+
+/// An exact key cannot legally point at wildcard targets.
+fn valid_key_value_pair(key: &Pattern, value: &Pattern) -> bool {
+    !matches!((key, value), (Pattern::Exact(_), Pattern::Wildcard { .. }))
+}
+
+/// Ports `TypeScript.Config.TsConfig`: baseUrl resolved against the
+/// tsconfig's own directory, mappings sorted for the hot path.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TsConfig {
-    /// Alias prefix → target prefixes, longest-prefix matched at lookup time.
-    pub paths: Vec<(String, Vec<String>)>,
-    pub base_url: Option<String>,
+    pub base_url: PathBuf,
+    pub paths: Vec<PathMapping>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawTsConfig {
+struct TsConfigDto {
     #[serde(default)]
-    compiler_options: CompilerOptions,
+    compiler_options: CompilerOptionsDto,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct CompilerOptions {
+struct CompilerOptionsDto {
     #[serde(default)]
     base_url: Option<String>,
     #[serde(default)]
@@ -31,116 +124,240 @@ struct CompilerOptions {
 }
 
 impl TsConfig {
-    pub fn load(path: &std::path::Path) -> Result<Self, crate::types::DeslopError> {
-        let raw = fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
-        Self::parse(&raw)
+    /// Ports `readTsConfig`.
+    pub fn load(path: &Path) -> Result<TsConfig, DeslopError> {
+        let json = fs::read_to_string(path)
+            .map_err(|e| DeslopError::TsConfigParse(format!("{}: {e}", path.display())))?;
+        Self::parse_from_json(&json, path.parent().unwrap_or(Path::new(".")))
     }
 
-    pub fn parse(json: &str) -> Result<Self, crate::types::DeslopError> {
-        // tsconfig is JSON-with-comments; strip // and /* */ comments first.
-        let stripped = strip_comments(json);
-        let raw: RawTsConfig = serde_json::from_str(&stripped)
-            .map_err(|e| crate::types::DeslopError::TsConfigParse(e.to_string()))?;
-        Ok(Self {
-            paths: raw
-                .compiler_options
-                .paths
-                .map(|m| m.into_iter().collect())
-                .unwrap_or_default(),
-            base_url: raw.compiler_options.base_url,
-        })
+    pub fn parse_from_json(json: &str, cfg_dir: &Path) -> Result<TsConfig, DeslopError> {
+        let stripped =
+            strip_ts_comments(json).ok_or_else(|| DeslopError::TsConfigParse("invalid JSON".into()))?;
+        let dto: TsConfigDto = serde_json::from_str(&stripped)
+            .map_err(|e| DeslopError::TsConfigParse(e.to_string()))?;
+        Ok(Self::from_dto(dto, cfg_dir))
     }
 
-    /// Longest alias prefix wins; see [`Self::resolve_alias_to`].
-    pub fn matches_alias(&self, specifier: &str) -> bool {
-        self.paths.iter().any(|(alias, _)| {
-            alias.strip_suffix('*').map_or(specifier == alias, |p| specifier.starts_with(p))
-        })
-    }
-
-    /// Rewrites a module specifier through tsconfig path aliases, longest
-    /// wildcard-prefix first; returns it unchanged when no alias matches.
-    pub fn resolve_alias_to(&self, specifier: &str) -> String {
-        let mut best: Option<(&str, &String)> = None;
-        for (alias, targets) in &self.paths {
-            let Some(target) = targets.first() else { continue };
-            if let Some(prefix) = alias.strip_suffix('*') {
-                if specifier.starts_with(prefix)
-                    && best.as_ref().map_or(true, |(bp, _)| prefix.len() > bp.len())
-                {
-                    best = Some((prefix, target));
-                }
-            }
+    fn from_dto(dto: TsConfigDto, cfg_dir: &Path) -> TsConfig {
+        let base_url_rel = dto.compiler_options.base_url.unwrap_or_else(|| ".".into());
+        let mut base_url = cfg_dir.join(&base_url_rel);
+        if !base_url.is_absolute() {
+            base_url = cfg_dir.join(base_url_rel);
         }
-        match best {
-            None => specifier.to_string(),
-            Some((prefix, target)) => {
-                let captured = &specifier[prefix.len()..];
-                match target.split_once('*') {
-                    Some((head, tail)) => format!("{head}{captured}{tail}"),
-                    None => target.clone(),
-                }
-            }
-        }
+        let mut paths: Vec<PathMapping> = dto
+            .compiler_options
+            .paths
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(k, vs)| PathMapping::parse(&k, &vs))
+            .collect();
+        sort_path_mappings(&mut paths);
+        TsConfig { base_url, paths }
     }
 }
 
-fn strip_comments(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '/' if chars.peek() == Some(&'/') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push(c);
+/// Ports `sortPathMappings`: descending by `(exact?, prefix length, suffix
+/// length)`. Stable, so equal keys keep their file order.
+fn sort_path_mappings(paths: &mut [PathMapping]) {
+    paths.sort_by(|a, b| b.key.sort_key().cmp(&a.key.sort_key()));
+}
+
+// ---------------------------------------------------------------------------
+// Comment stripping (ports the jsoncStripper megaparsec parser)
+// ---------------------------------------------------------------------------
+
+/// Safely strips `//` and `/* */` comments from JSON text, leaving string
+/// literals (and URLs inside them) alone. Returns `None` when the text cannot
+/// be parsed — e.g. an unterminated string — matching `parseMaybe ... <|>
+/// fromMaybe input`'s bail-out.
+pub fn strip_ts_comments(input: &str) -> Option<String> {
+    let b = input.as_bytes();
+    let len = b.len();
+    let mut i = 0;
+    let mut out = String::with_capacity(input.len());
+    while i < len {
+        let c = b[i];
+        if c == b'"' {
+            // Consume the literal whole, honoring backslash escapes.
+            let start = i;
+            i += 1;
+            let mut closed = false;
+            while i < len {
+                match b[i] {
+                    b'\\' => i += 2,
+                    b'"' => {
+                        i += 1;
+                        closed = true;
                         break;
                     }
+                    _ => i += 1,
                 }
             }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                while let Some(c) = chars.next() {
-                    if c == '*' && chars.peek() == Some(&'/') {
-                        chars.next();
-                        break;
-                    }
-                }
+            if !closed {
+                return None;
             }
-            '"' => {
-                out.push('"');
-                for c in chars.by_ref() {
-                    out.push(c);
-                    if c == '"' || c == '\n' {
-                        break;
-                    }
-                }
+            out.push_str(&input[start..i]);
+        } else if c == b'/' && i + 1 < len && b[i + 1] == b'/' {
+            while i < len && b[i] != b'\n' {
+                i += 1;
             }
-            _ => out.push(c),
+        } else if c == b'/' && i + 1 < len && b[i + 1] == b'*' {
+            i += 2;
+            let mut closed = false;
+            while i + 1 < len {
+                if b[i] == b'*' && b[i + 1] == b'/' {
+                    i += 2;
+                    closed = true;
+                    break;
+                }
+                i += 1;
+            }
+            if !closed {
+                return None;
+            }
+        } else {
+            // Bulk-consume everything that cannot start a construct above.
+            let start = i;
+            while i < len && b[i] != b'"' && b[i] != b'/' {
+                i += 1;
+            }
+            if start == i {
+                // An isolated slash that starts nothing: keep it literally.
+                out.push('/');
+                i += 1;
+            } else {
+                out.push_str(&input[start..i]);
+            }
         }
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// ConfigSpec parsePattern table.
     #[test]
-    fn parses_paths_with_comments() {
-        let cfg = TsConfig::parse(
-            r#"{
+    fn parse_pattern_cases() {
+        assert_eq!(Pattern::parse(""), None);
+        assert_eq!(Pattern::parse("hello"), Some(Pattern::Exact("hello".into())));
+        assert_eq!(Pattern::parse("*"), Some(Pattern::Wildcard { pre: "".into(), suff: "".into() }));
+        assert_eq!(
+            Pattern::parse("@/*"),
+            Some(Pattern::Wildcard { pre: "@/".into(), suff: "".into() })
+        );
+        assert_eq!(
+            Pattern::parse("*.spec.ts"),
+            Some(Pattern::Wildcard { pre: "".into(), suff: ".spec.ts".into() })
+        );
+        assert_eq!(
+            Pattern::parse("@/data/*-dto"),
+            Some(Pattern::Wildcard { pre: "@/data/".into(), suff: "-dto".into() })
+        );
+        assert_eq!(Pattern::parse("src/*/*"), None);
+        assert_eq!(Pattern::parse("**"), None);
+        assert_eq!(Pattern::parse("a*b*c"), None);
+    }
+
+    /// ConfigSpec parsePathMapping table.
+    #[test]
+    fn parse_path_mapping_cases() {
+        let vals = |v: &[&str]| -> Vec<String> { v.iter().map(|s| s.to_string()).collect() };
+        // Empty target array.
+        assert_eq!(PathMapping::parse("@app/*", &[]), None);
+        // Invalid key ruins the mapping even with valid targets.
+        assert_eq!(PathMapping::parse("@app/*/*", &vals(&["./src/*"])), None);
+        // Filters invalid targets, cleans './', keeps at least one.
+        assert_eq!(
+            PathMapping::parse("@app/*", &vals(&["./src/*", "./invalid/*/*", "./lib/*"])),
+            Some(PathMapping {
+                key: Pattern::Wildcard { pre: "@app/".into(), suff: "".into() },
+                values: vec![
+                    Pattern::Wildcard { pre: "src/".into(), suff: "".into() },
+                    Pattern::Wildcard { pre: "lib/".into(), suff: "".into() },
+                ],
+            })
+        );
+        // Exact key mapped to exact value, './' cleaned.
+        assert_eq!(
+            PathMapping::parse("jquery", &vals(&["./vendor/jquery.js"])),
+            Some(PathMapping {
+                key: Pattern::Exact("jquery".into()),
+                values: vec![Pattern::Exact("vendor/jquery.js".into())],
+            })
+        );
+        // Pure '.' flattens to empty; nested './././' cleaned recursively.
+        assert_eq!(
+            PathMapping::parse("@root", &vals(&["."])),
+            Some(PathMapping {
+                key: Pattern::Exact("@root".into()),
+                values: vec![Pattern::Exact("".into())],
+            })
+        );
+        assert_eq!(
+            PathMapping::parse("@app/*", &vals(&["./././src/*", "././lib/*"])),
+            Some(PathMapping {
+                key: Pattern::Wildcard { pre: "@app/".into(), suff: "".into() },
+                values: vec![
+                    Pattern::Wildcard { pre: "src/".into(), suff: "".into() },
+                    Pattern::Wildcard { pre: "lib/".into(), suff: "".into() },
+                ],
+            })
+        );
+        // '../' traversals preserved.
+        assert_eq!(
+            PathMapping::parse("@shared/*", &vals(&["../shared/*", "./../external/*"])),
+            Some(PathMapping {
+                key: Pattern::Wildcard { pre: "@shared/".into(), suff: "".into() },
+                values: vec![
+                    Pattern::Wildcard { pre: "../shared/".into(), suff: "".into() },
+                    Pattern::Wildcard { pre: "../external/".into(), suff: "".into() },
+                ],
+            })
+        );
+        // Exact key with only wildcard targets is invalid.
+        assert_eq!(PathMapping::parse("react", &vals(&["*.css"])), None);
+        // Next.js root alias './*' cleans into a bare catch-all.
+        assert_eq!(
+            PathMapping::parse("@/*", &vals(&["./*"])),
+            Some(PathMapping {
+                key: Pattern::Wildcard { pre: "@/".into(), suff: "".into() },
+                values: vec![Pattern::Wildcard { pre: "".into(), suff: "".into() }],
+            })
+        );
+    }
+
+    /// Sorting: exact keys before wildcards, longer prefixes first.
+    #[test]
+    fn sorts_exact_first_then_longest_prefix() {
+        let mk = |k: &str| PathMapping::parse(k, &[format!("{k}x")]).unwrap();
+        let mut paths = vec![mk("@/*"), mk("jquery"), mk("@/ui/*"), mk("*")];
+        sort_path_mappings(&mut paths);
+        let keys: Vec<&str> = paths
+            .iter()
+            .map(|p| match &p.key {
+                Pattern::Exact(s) => s.as_str(),
+                Pattern::Wildcard { pre, suff } => Box::leak(format!("{pre}*{suff}").into_boxed_str()),
+            })
+            .collect();
+        assert_eq!(keys, ["jquery", "@/ui/*", "@/*", "*"]);
+    }
+
+    #[test]
+    fn strips_comments_protecting_strings() {
+        let src = r#"{
   // comment
-  "compilerOptions": {
-    "baseUrl": "src",
-    "paths": { "@/*": ["app/*"], "@/ui/*": ["src/ui/*"] }
-  }
-}"#,
-        )
-        .unwrap();
-        assert_eq!(cfg.resolve_alias_to("@/x/y"), "app/x/y");
-        // longest alias prefix wins
-        assert_eq!(cfg.resolve_alias_to("@/ui/button"), "src/ui/button");
-        assert_eq!(cfg.resolve_alias_to("react"), "react");
+  /* block */
+  "url": "http://x/y", // trailing
+  "a": "str /* not comment */ ing",
+  "esc": "quote \" stays"
+}"#;
+        let out = strip_ts_comments(src).unwrap();
+        assert!(out.contains("// comment") == false);
+        assert!(out.contains("http://x/y"));
+        assert!(out.contains("str /* not comment */ ing"));
+        assert!(out.contains("\\\""));
     }
 }
