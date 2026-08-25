@@ -24,6 +24,17 @@ error report, and fix snapshots of rewritten files).
   ids, transitive enforcement, duplicate compaction (shortest chain absorbs
   the rest), baselines whose ids interoperate with the Haskell original's.
 
+## Install
+
+```sh
+npm install deslop-rs   # or: npx deslop-rs check .
+cargo install deslop-rs # from source
+```
+
+Prebuilt binaries for macOS (arm64, x64), Linux (arm64, x64 static) and
+Windows (x64) ship from [GitHub Releases](../../releases) and npm
+per-platform packages.
+
 ## Usage
 
 ```sh
