@@ -14,7 +14,7 @@ jobs:
       matrix:
         include:
           - { target: aarch64-apple-darwin,       os: macos-14,       archive: tar.gz, npm: darwin-arm64 }
-          - { target: x86_64-apple-darwin,         os: macos-13,       archive: tar.gz, npm: darwin-x64 }
+          - { target: x86_64-apple-darwin,         os: macos-latest,   archive: tar.gz, npm: darwin-x64 }
           - { target: aarch64-unknown-linux-gnu,   os: ubuntu-24.04-arm, archive: tar.gz, npm: linux-arm64 }
           - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest,  archive: tar.gz, npm: linux-x64 }
           - { target: x86_64-pc-windows-msvc,      os: windows-latest, archive: zip,    npm: win32-x64 }
