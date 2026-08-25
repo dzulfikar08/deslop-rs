@@ -141,10 +141,9 @@ impl TsConfig {
 
     fn from_dto(dto: TsConfigDto, cfg_dir: &Path) -> TsConfig {
         let base_url_rel = dto.compiler_options.base_url.unwrap_or_else(|| ".".into());
-        let mut base_url = cfg_dir.join(&base_url_rel);
-        if !base_url.is_absolute() {
-            base_url = cfg_dir.join(base_url_rel);
-        }
+        // Mirrors `withAbsBaseSafe cfgDir baseUrl`: join always; an absolute
+        // rel replaces the dir outright in both OsPath (</>) and Path::join.
+        let base_url = cfg_dir.join(base_url_rel);
         let mut paths: Vec<PathMapping> = dto
             .compiler_options
             .paths
@@ -157,10 +156,10 @@ impl TsConfig {
     }
 }
 
-/// Ports `sortPathMappings`: descending by `(exact?, prefix length, suffix
-/// length)`. Stable, so equal keys keep their file order.
+use std::cmp::Reverse;
+
 fn sort_path_mappings(paths: &mut [PathMapping]) {
-    paths.sort_by(|a, b| b.key.sort_key().cmp(&a.key.sort_key()));
+    paths.sort_by_key(|p| Reverse(p.key.sort_key()));
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +354,7 @@ mod tests {
   "esc": "quote \" stays"
 }"#;
         let out = strip_ts_comments(src).unwrap();
-        assert!(out.contains("// comment") == false);
+        assert!(!out.contains("// comment"));
         assert!(out.contains("http://x/y"));
         assert!(out.contains("str /* not comment */ ing"));
         assert!(out.contains("\\\""));

@@ -204,7 +204,7 @@ pub fn render_error(error: &GlobPlusError) -> String {
                 "{}{} has no literal between the two variables, so there\n  \
                  is no way to tell where the first one ends. A * between them is not a\n  \
                  boundary either, because it can match nothing.\n  \
-                 Separate them with a literal, e.g. {}/{}/.",
+                 Separate them with a literal, e.g. {}/{}.",
                 braced(left),
                 braced(right),
                 braced(left),
@@ -266,7 +266,7 @@ pub fn compile_target_pattern(input: &str) -> Result<CompiledTargetPattern, Glob
     let steps = parse_segments(input)?;
     let segments = no_parent_dirs(GlobPlusError::ParentDirInTargetPattern, &steps)?;
     let segments: Vec<Seg<Vec<SegPart<TargetVar>>>> =
-        resolve_vars(|raw| resolve_target_var(&raw), &segments)?;
+        resolve_vars(resolve_target_var, &segments)?;
     for segment in &segments {
         if let Seg::Segment(parts) = segment {
             check_boundaries(parts)?;

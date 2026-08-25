@@ -597,10 +597,7 @@ fn expand_segment(env: &MatchEnv, seg: &Seg<Vec<SegPart<ClauseVar>>>) -> Option<
                 match part {
                     SegPart::Lit(t) => text.push_str(t),
                     SegPart::AnyChars => return None,
-                    SegPart::Var(v) => match value_of(env, v) {
-                        Some(value) => text.push_str(&value),
-                        None => return None,
-                    },
+                    SegPart::Var(v) => text.push_str(&value_of(env, v)?),
                 }
             }
             Some(text.split('/').map(str::to_string).collect())

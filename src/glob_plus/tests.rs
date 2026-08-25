@@ -4,8 +4,8 @@
 use crate::casing::Casing;
 use crate::glob_plus::compiler::{compile_clause_pattern, compile_exclude_pattern, compile_target_pattern, GlobPlusError};
 use crate::glob_plus::{
-    match_clause, match_target, module_from_glob, render_clause_pattern, segments_of,
-    ClauseVar, MatchEnv, Polarity, Segments,
+    match_clause, match_target, module_from_glob, render_clause_pattern, segments_of, MatchEnv,
+    Polarity,
 };
 use std::collections::BTreeMap;
 
