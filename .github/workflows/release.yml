@@ -95,6 +95,8 @@ jobs:
               echo "no binary found for $plat"; ls -R artifacts | head -40; exit 1
             fi
             cp -r "$bin" "npm/packages/$plat/"
+            # Artifact zips do not carry the executable bit; npm packs do.
+            chmod +x "npm/packages/$plat/bin/deslop"*
           done
       - name: stamp versions
         if: steps.guard.outputs.skip != 'true'
