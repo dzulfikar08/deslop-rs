@@ -57,6 +57,13 @@ pub struct TsProgram {
     pub cst: Vec<TsNode>,
 }
 
+impl TsProgram {
+    /// Renders every node in order: the file, exactly as it now stands.
+    pub fn render(&self) -> String {
+        self.cst.iter().map(|node| node.render()).collect()
+    }
+}
+
 /// Ports `TypeScript.Parser.parseTs`: lex the whole file, turn every import
 /// token into a structured node, keep everything else as verbatim source.
 /// The lexer cannot fail; a malformed import token degrades to a `Source`.
@@ -274,6 +281,14 @@ fn parse_import(raw: &str) -> Option<TsNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rendering a parsed program reproduces the input byte-for-byte.
+    #[test]
+    fn program_render_round_trips() {
+        let src = "// c\nimport x from './y';\nconst z = 1;\n";
+        let prog = parse_ts("a.ts", src);
+        assert_eq!(prog.render(), src);
+    }
 
     /// LexerSpec round-trip property, spot-checked over tricky inputs.
     #[test]

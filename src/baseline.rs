@@ -21,6 +21,11 @@ impl Baseline {
         Self::default()
     }
 
+    /// Test seam: a baseline holding exactly these ids.
+    pub fn from_ids(ids: Vec<String>) -> Self {
+        Baseline(ids.into_iter().map(ProblemId).collect())
+    }
+
     pub fn contains(&self, id: &ProblemId) -> bool {
         self.0.contains(id)
     }

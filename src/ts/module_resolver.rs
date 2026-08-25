@@ -147,7 +147,9 @@ pub fn resolve(cfg: &TsConfig, importing_file: &Path, target: &ModuleId) -> Opti
     if is_relative_import(target) {
         let importer_dir = importing_file.parent().unwrap_or(Path::new("."));
         let target_path = clean_relative(importer_dir.join(target.text()));
-        try_extensions(&target_path)
+        // Ports `maybe (fsMkAbsolute targetPath) pure`: an import whose
+        // extension probes all miss still resolves — to its own path.
+        try_extensions(&target_path).or(Some(target_path))
     } else {
         cfg.paths.iter().find_map(|p| {
             let key_match = match_pattern(&p.key, target.text())?;
@@ -189,6 +191,23 @@ fn try_extensions(fp: &Path) -> Option<PathBuf> {
     TS_EXTENSIONS.iter().find_map(|ext| {
         let candidate = PathBuf::from(format!("{}{ext}", fp.display()));
         candidate.is_file().then_some(candidate)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// programModuleId
+// ---------------------------------------------------------------------------
+
+/// Ports `TypeScript.AST.parseAst`'s `programModuleId`: a file's own id must
+/// come from the same alias mapping its import edges use, or the two never
+/// meet in the graph. `reverseResolve` works from the path directly, which
+/// both OSes split correctly; the raw extension-dropped path remains the
+/// fallback for unmapped files.
+pub fn program_module_id(cfg: &TsConfig, path: &Path) -> ModuleId {
+    reverse_resolve(cfg, path).unwrap_or_else(|| {
+        module_id_unsafe(
+            drop_type_script_extension(path).to_string_lossy().replace('\\', "/"),
+        )
     })
 }
 

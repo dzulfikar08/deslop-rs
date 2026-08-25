@@ -13,9 +13,10 @@ pub struct ImportNode {
 /// Ports `Deslop.AST.AstModule`.
 #[derive(Debug, Clone)]
 pub struct AstModule {
-    /// Module identity — relative path with `/`, extension dropped later by
-    /// the resolver; see `module_id`.
+    /// Module identity — its alias-mapped id; see `program_module_id`.
     pub id: String,
+    /// The file's own absolute path, as written on disk.
+    pub path: String,
     pub nodes: Vec<ImportNode>,
 }
 
@@ -29,9 +30,6 @@ impl AstModule {
 /// becomes an edge candidate carrying its raw statement; source trivia drops
 /// out.
 ///
-/// TODO(port): the module-id half of parseAst — `reverseResolve` of the file's
-/// own path through the tsconfig alias mapping, falling back to the raw
-/// extension-dropped path — once `TypeScript.ModuleResolver` lands.
 pub fn parse_ast(id: String, prog: &TsProgram) -> AstModule {
     let nodes = prog
         .cst
@@ -44,7 +42,7 @@ pub fn parse_ast(id: String, prog: &TsProgram) -> AstModule {
             TsNode::Source { .. } => None,
         })
         .collect();
-    AstModule { id, nodes }
+    AstModule { id, path: prog.path.clone(), nodes }
 }
 
 #[cfg(test)]
