@@ -104,7 +104,7 @@ jobs:
         run: |
           VERSION="${VERSION#v}"
           find . -name package.json -maxdepth 3 | while read -r f; do
-            node -e "const f=process.argv[1],v=process.argv[2],p=require(f);p.version=v;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')" "$f" "$VERSION"
+            node -e "const f=process.argv[1],v=process.argv[2],p=require(f);p.version=v;if(p.optionalDependencies)for(const k of Object.keys(p.optionalDependencies))p.optionalDependencies[k]=v;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')" "$f" "$VERSION"
           done
       - name: publish platform packages
         id: platforms
