@@ -28,8 +28,8 @@ error report, and fix snapshots of rewritten files).
 
 ```sh
 cargo run -- check <project-dir>    # report problems
- cargo run -- fix <project-dir>      # rewrite relative imports to aliases
- cargo run -- baseline <project-dir> # silence the current problem set
+cargo run -- fix <project-dir>      # rewrite relative imports to aliases
+cargo run -- baseline <project-dir> # silence the current problem set
 ```
 
 A rulebook looks like:
@@ -52,8 +52,8 @@ rules:
 
 ```sh
 cargo build
- cargo test            # 104 unit tests
-cargo clippy --all-targets  # zero warnings
+cargo test                 # 104 unit tests
+cargo clippy --all-targets # zero warnings
 
 # Differential QA: run the binary over the Haskell suite's fixture goldens
 # (expects the original repo checked out beside this one).
