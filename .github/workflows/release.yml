@@ -1,0 +1,119 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin,       os: macos-14,       archive: tar.gz, npm: darwin-arm64 }
+          - { target: x86_64-apple-darwin,         os: macos-13,       archive: tar.gz, npm: darwin-x64 }
+          - { target: aarch64-unknown-linux-gnu,   os: ubuntu-24.04-arm, archive: tar.gz, npm: linux-arm64 }
+          - { target: x86_64-unknown-linux-musl,   os: ubuntu-latest,  archive: tar.gz, npm: linux-x64 }
+          - { target: x86_64-pc-windows-msvc,      os: windows-latest, archive: zip,    npm: win32-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: package
+        shell: bash
+        run: |
+          ext=""
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then ext=".exe"; fi
+          mkdir -p "dist/npm-${{ matrix.npm }}/bin"
+          cp "target/${{ matrix.target }}/release/deslop${ext}" "dist/npm-${{ matrix.npm }}/bin/"
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "deslop-${{ matrix.target }}.zip" "npm-${{ matrix.npm }}/bin"
+          else
+            tar czf "deslop-${{ matrix.target }}.tar.gz" "npm-${{ matrix.npm }}/bin"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deslop-${{ matrix.target }}
+          path: dist
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate-release-notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  npm:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: guard
+        id: guard
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping npm publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: stage binaries
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          for plat in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+            mkdir -p "npm/packages/$plat"
+            cp -r "artifacts/npm-$plat/bin" "npm/packages/$plat/"
+          done
+      - name: stamp versions
+        if: steps.guard.outputs.skip != 'true'
+        working-directory: npm
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          find . -name package.json -maxdepth 3 | while read -r f; do
+            node -e "const f=process.argv[1],v=process.argv[2],p=require(f);p.version=v;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')" "$f" "$VERSION"
+          done
+      - name: publish platform packages
+        if: steps.guard.outputs.skip != 'true'
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for plat in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+            (cd "packages/$plat" && npm publish --access public)
+          done
+      - name: publish wrapper
+        if: steps.guard.outputs.skip != 'true'
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

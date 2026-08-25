@@ -1,0 +1,17 @@
+{
+  "name": "deslop-rs-win32-x64",
+  "version": "0.1.0",
+  "description": "deslop-rs binary for win32 x64",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dzulfikar08/deslop-rs.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

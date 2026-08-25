@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Removes slop from TypeScript projects. Rust rewrite of deslop."
-repository = "https://github.com/ivy-apps/deslop-rs"
+repository = "https://github.com/dzulfikar08/deslop-rs"
 
 [lib]
 name = "deslop_rs"

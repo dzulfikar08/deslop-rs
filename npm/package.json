@@ -1,0 +1,44 @@
+{
+  "name": "deslop-rs",
+  "version": "0.1.0",
+  "description": "Static import-graph analyzer for TypeScript. Architecture rules in YAML, enforced on every run. Rust rewrite of deslop.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dzulfikar08/deslop-rs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dzulfikar08/deslop-rs/issues"
+  },
+  "keywords": [
+    "typescript",
+    "cli",
+    "code-quality",
+    "deslop",
+    "architecture",
+    "import-graph",
+    "static-analysis",
+    "lint",
+    "yaml"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "deslop-rs": "./wrapper.js"
+  },
+  "files": [
+    "wrapper.js"
+  ],
+  "optionalDependencies": {
+    "deslop-rs-darwin-arm64": "0.1.0",
+    "deslop-rs-darwin-x64": "0.1.0",
+    "deslop-rs-linux-arm64": "0.1.0",
+    "deslop-rs-linux-x64": "0.1.0",
+    "deslop-rs-win32-x64": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
