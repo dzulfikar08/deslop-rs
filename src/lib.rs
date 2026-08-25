@@ -1,9 +1,10 @@
 //! deslop-rs — Rust rewrite of deslop, a static import-graph analyzer for
 //! TypeScript enforcing architecture rules written in YAML.
 //!
-//! Status: draft skeleton. Modules marked `TODO(port)` still need their
-//! algorithm ported from the Haskell original; the surrounding plumbing
-//! (params, problems, baselines, discovery, reporting) already works.
+//! Status: the pipeline runs end to end — Glob+ rulebook compilation and
+//! enforcement, both built-in lints (relative imports with fix splicing,
+//! import cycles), the compaction shrinker, and baseline round-tripping.
+//! Remaining `TODO(port)` markers note parity gaps (report goldens, NO_COLOR).
 
 // Stubs are intentionally unused until their engines are ported.
 #![allow(dead_code)]
