@@ -12,17 +12,35 @@ pub fn portable_path(p: &str) -> String {
 pub struct ProblemId(pub String);
 
 /// Which built-in lint produced the problem (`no-relative-imports` today).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct LintRuleId(pub String);
 
-/// A rulebook rule that was broken.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RuleViolationKind;
+/// How a Rule was broken. The Rule's own prose says why the Rule exists; this
+/// says what the module actually did, and carries the facts a report is
+/// written from rather than the sentence itself — `problem_formatter` owns
+/// that. Ports `Deslop.Problem.ViolationKind`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub enum ViolationKind {
+    /// The module names the forbidden module in an import of its own.
+    DirectImport { imported: String, import_statement: String },
+    /// The module arrives at a forbidden module by following imports. `chain`
+    /// runs from the module to what it must not reach, and `first_import` is
+    /// the import that opens it — absent when the chain has no first hop.
+    TransitiveImport {
+        chain: Vec<String>,
+        first_import: Option<String>,
+        /// The chains this violation stands in for, once duplicates have been
+        /// compacted. Empty until the shrinker runs, and empty afterwards for
+        /// a violation that had no duplicates.
+        also_reached: Vec<Vec<String>>,
+    },
+    /// The module does not import something the Rule requires it to.
+    MissingUse { required_import: String, transitive: bool },
+    /// A module the Rule requires to exist does not.
+    MissingModule { required_module: String },
+}
 
-// TODO(port): ViolationKind (DirectImport / TransitiveImport / MissingUse /
-// MissingModule) once RuleEnforcer + ModuleId land.
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Problem {
     Lint {
         lint_rule: LintRuleId,
@@ -32,14 +50,12 @@ pub enum Problem {
         fix: Option<String>,
         auto_fixable: bool,
     },
-    // TODO(port): Rule { .. } variant with ViolationKind payload.
-    #[allow(unused)]
     Rule {
         rulebook_id: String,
         rule_id: String,
         bad_module: String,
-        kind: RuleViolationKind,
         prose: String,
+        kind: ViolationKind,
         fix: String,
     },
 }
@@ -73,11 +89,25 @@ mod tests {
     fn lint() -> Problem {
         Problem::Lint {
             lint_rule: LintRuleId("no-relative-imports".into()),
-            file: r#"src\a\b.ts"#.into(),
+            file: r"src\a\b.ts".into(),
             code: "import x from '../b'".into(),
             description: "relative import".into(),
             fix: Some("import x from '@/b'".into()),
             auto_fixable: true,
+        }
+    }
+
+    fn violation() -> Problem {
+        Problem::Rule {
+            rulebook_id: "clean-architecture".into(),
+            rule_id: "domain-is-pure".into(),
+            bad_module: "@/domain/user".into(),
+            kind: ViolationKind::DirectImport {
+                imported: "react".into(),
+                import_statement: "import { useState } from 'react';".into(),
+            },
+            prose: "Domain must be pure".into(),
+            fix: "Remove the import".into(),
         }
     }
 
@@ -87,7 +117,16 @@ mod tests {
     }
 
     #[test]
+    fn violation_id_is_rulebook_rule_module() {
+        assert_eq!(
+            violation().id(),
+            ProblemId("clean-architecture#domain-is-pure#@/domain/user".into())
+        );
+    }
+
+    #[test]
     fn fixability_follows_lint_flag_only() {
         assert!(lint().is_auto_fixable());
+        assert!(!violation().is_auto_fixable());
     }
 }
