@@ -90,7 +90,11 @@ jobs:
         run: |
           for plat in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
             mkdir -p "npm/packages/$plat"
-            cp -r "artifacts/npm-$plat/bin" "npm/packages/$plat/"
+            bin=$(find artifacts -type d -path "*/npm-$plat/bin" | head -1)
+            if [ -z "$bin" ]; then
+              echo "no binary found for $plat"; ls -R artifacts | head -40; exit 1
+            fi
+            cp -r "$bin" "npm/packages/$plat/"
           done
       - name: stamp versions
         if: steps.guard.outputs.skip != 'true'
