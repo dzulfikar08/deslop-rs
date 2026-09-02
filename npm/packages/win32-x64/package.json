@@ -1,5 +1,5 @@
 {
-  "name": "deslop-rs-win32-x64",
+  "name": "@dzulfikarts/deslop-rs-win32-x64",
   "version": "0.1.0",
   "description": "deslop-rs binary for win32 x64",
   "license": "MIT",

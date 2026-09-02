@@ -119,7 +119,7 @@ jobs:
           VERSION="${VERSION#v}"
           failed=""
           for plat in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-            pkg="deslop-rs-$plat"
+            if [ "$plat" = win32-x64 ]; then pkg="@dzulfikarts/deslop-rs-win32-x64"; else pkg="deslop-rs-$plat"; fi
             if [ "$(npm view "$pkg" version 2>/dev/null)" = "$VERSION" ]; then
               echo "$pkg@$VERSION already published, skipping"
               continue
